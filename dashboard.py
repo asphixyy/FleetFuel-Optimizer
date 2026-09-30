@@ -13,7 +13,7 @@ MQTT_TOPIC = "fleetfuel/telematics"
 
 class MQTTTelemetryStore:
     def __init__(self):
-        self.incline = None
+        self.incline = 0.0
         self.speed = None
         self.rpm = None
         self.last_time = None
@@ -21,12 +21,12 @@ class MQTTTelemetryStore:
         self.status = "Connecting..."
         self.client = None
 
-if "global_telemetry_store" not in globals():
-    global_telemetry_store = MQTTTelemetryStore()
-    globals()["global_telemetry_store"] = global_telemetry_store
+@st.cache_resource
+def get_mqtt_telemetry_store():
+    store = MQTTTelemetryStore()
 
     def _on_mqtt_connect(client, userdata, flags, rc, properties=None):
-        global_telemetry_store.status = "Connected"
+        store.status = "Connected"
         client.subscribe(MQTT_TOPIC)
         client.subscribe("fleetfuel/+/telematics")
 
@@ -34,31 +34,48 @@ if "global_telemetry_store" not in globals():
         try:
             payload = json.loads(msg.payload.decode())
             if "incline" in payload:
-                global_telemetry_store.incline = round(float(payload["incline"]), 1)
+                store.incline = round(float(payload["incline"]), 1)
             if "speed" in payload:
-                global_telemetry_store.speed = round(float(payload["speed"]), 1)
+                store.speed = round(float(payload["speed"]), 1)
             if "rpm" in payload:
-                global_telemetry_store.rpm = int(payload["rpm"])
-            global_telemetry_store.last_time = time.strftime("%H:%M:%S")
-            global_telemetry_store.packet_count += 1
+                store.rpm = int(payload["rpm"])
+            store.last_time = time.strftime("%H:%M:%S")
+            store.packet_count += 1
         except Exception:
             pass
 
+    connected = False
     try:
-        mq_client = mqtt.Client(
-            mqtt.CallbackAPIVersion.VERSION2 if hasattr(mqtt, "CallbackAPIVersion") else None,
-            client_id=f"fleetfuel_dash_{int(time.time()*1000)%100000}"
-        )
+        api_ver = mqtt.CallbackAPIVersion.VERSION2 if hasattr(mqtt, "CallbackAPIVersion") else None
+        mq_client = mqtt.Client(api_ver, client_id=f"fleetfuel_tcp_{int(time.time()*1000)%100000}")
         mq_client.on_connect = _on_mqtt_connect
         mq_client.on_message = _on_mqtt_message
-        mq_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+        mq_client.connect(MQTT_BROKER, 1883, 30)
         mq_client.loop_start()
-        global_telemetry_store.client = mq_client
-        global_telemetry_store.status = "Connected"
-    except Exception as e:
-        global_telemetry_store.status = f"Offline ({e})"
-else:
-    global_telemetry_store = globals()["global_telemetry_store"]
+        store.client = mq_client
+        store.status = "Connected (TCP 1883)"
+        connected = True
+    except Exception:
+        pass
+
+    if not connected:
+        try:
+            api_ver = mqtt.CallbackAPIVersion.VERSION2 if hasattr(mqtt, "CallbackAPIVersion") else None
+            mq_client = mqtt.Client(api_ver, client_id=f"fleetfuel_ws_{int(time.time()*1000)%100000}", transport="websockets")
+            mq_client.ws_set_options(path="/mqtt")
+            mq_client.tls_set()
+            mq_client.on_connect = _on_mqtt_connect
+            mq_client.on_message = _on_mqtt_message
+            mq_client.connect(MQTT_BROKER, 8884, 30)
+            mq_client.loop_start()
+            store.client = mq_client
+            store.status = "Connected (WSS 8884)"
+        except Exception as e:
+            store.status = f"Offline ({e})"
+
+    return store
+
+global_telemetry_store = get_mqtt_telemetry_store()
 
 st.set_page_config(
     page_title="FleetFuel AI - Telematics Dashboard",
@@ -301,9 +318,13 @@ if preset == "Live Slope Optimization":
             except Exception:
                 st.sidebar.warning("⚠️ Phone not reachable.")
 
-if preset == "Live Slope Optimization" and iot_source == "Cloud MQTT Broker" and global_telemetry_store.incline is not None:
-    incline = float(np.clip(global_telemetry_store.incline, -15.0, 15.0))
-    st.sidebar.metric("Live Telemetry Incline", f"{incline:+.1f}°")
+# Determine current incline from IoT source or manual slider
+if preset == "Live Slope Optimization" and iot_source == "Cloud MQTT Broker":
+    if global_telemetry_store.packet_count > 0:
+        incline = float(np.clip(global_telemetry_store.incline, -15.0, 15.0))
+        st.sidebar.metric("Live Telemetry Incline", f"{incline:+.1f}°")
+    else:
+        incline = st.sidebar.slider("Incline Angle (°: -Downhill, +Uphill)", -15.0, 15.0, float(p_inc), 0.5)
     if global_telemetry_store.speed is not None:
         speed = float(global_telemetry_store.speed)
     if global_telemetry_store.rpm is not None:
@@ -323,14 +344,21 @@ fuel_price = st.sidebar.number_input("Fuel Price (₹/L)", 50.0, 200.0, 95.0, 0.
 
 data = calculate_fuel_telematics(speed, rpm, accel, incline, payload, fuel_avail, temp, tire_psi, fuel_price)
 
+# Main page live ingestion status banner
+if preset == "Live Slope Optimization" and iot_source == "Cloud MQTT Broker":
+    if global_telemetry_store.packet_count > 0:
+        st.success(f"⚡ **Live Phone Sensor Active:** Road Incline = **{incline:+.1f}°** *(Packet #{global_telemetry_store.packet_count} at {global_telemetry_store.last_time})*")
+    else:
+        st.info("💡 **Ready for Live Telemetry:** Tap **'Enable This Phone's Sensor'** above and tilt your device. Fuel consumption & range will recalculate in real-time.")
+
 if preset == "Live Slope Optimization":
     if incline > 3.0:
         rec_spd = max(35.0, round(65.0 - (incline * 2.2)))
-        st.warning(f"⛰️ **Steep Climb Detected ({incline}°):** Downshift gear & reduce cruising speed to **{rec_spd} km/h**.")
+        st.warning(f"⛰️ **Steep Climb Detected ({incline:+.1f}°):** Downshift gear & reduce cruising speed to **{rec_spd} km/h**.")
     elif incline < -2.0:
-        st.success(f"📉 **Downhill Assist Detected ({incline}°):** Zero throttle coasting recommended.")
+        st.success(f"📉 **Downhill Assist Detected ({incline:+.1f}°):** Zero throttle coasting recommended.")
     else:
-        st.info(f"🛣️ **Level Terrain ({incline}°):** Optimal steady cruise speed is **65–75 km/h**.")
+        st.info(f"🛣️ **Level Terrain ({incline:+.1f}°):** Optimal steady cruise speed is **65–75 km/h**.")
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Actual Fuel Rate", f"{data['actual_lh']} L/h", f"{data['dev_pct']:+}% vs baseline", delta_color="inverse")
