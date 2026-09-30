@@ -130,6 +130,7 @@ preset = st.sidebar.selectbox(
     "Quick Scenario Presets",
     [
         "Custom Slider Controls",
+        "Live Slope Optimization",
         "Maximum Range Extender",
         "Optimal Highway Cruise",
         "Steep Mountain Climb",
@@ -141,6 +142,7 @@ preset = st.sidebar.selectbox(
 
 # Preset default values (speed, rpm, accel, incline, payload, fuel_avail, temp, tire_psi)
 defaults = {
+    "Live Slope Optimization": (55.0, 1500,  0.0,  0.0, 2000.0,  60.0, 90.0, 35.0),
     "Maximum Range Extender":  (44.0, 1300,  0.0,  0.0,    0.0, 120.0, 90.0, 36.0),
     "Optimal Highway Cruise":  (80.0, 1600,  0.0,  0.0, 2000.0,  75.0, 88.0, 36.0),
     "Steep Mountain Climb":    (45.0, 2600,  0.8,  8.5, 6500.0,  50.0, 95.0, 34.0),
@@ -158,6 +160,30 @@ rpm = st.sidebar.slider("Engine RPM", 600, 5000, int(p_rpm), 50)
 accel = st.sidebar.slider("Acceleration / Braking (m/s²)", -4.0, 4.0, float(p_acc), 0.1)
 
 st.sidebar.subheader("⛰️ Road & Incline")
+
+# If Live Slope Optimization is active, offer smartphone sensor sync
+if preset == "Live Slope Optimization":
+    st.sidebar.info("📱 **IoT Mode:** Stream slope live from phone motion sensors!")
+    phone_url = st.sidebar.text_input("Phone URL (Phyphox)", "http://192.168.1.15:8080", help="Enable Remote Access in the Phyphox app")
+    c_btn1, c_btn2 = st.sidebar.columns(2)
+    with c_btn1:
+        sync_phone = st.button("📲 Poll Phone")
+    with c_btn2:
+        auto_tilt = st.checkbox("Auto-Demo", value=False, help="Simulate slope changes automatically")
+
+    if sync_phone and phone_url:
+        try:
+            import requests
+            res = requests.get(f"{phone_url.rstrip('/')}/get?inclination", timeout=1.2).json()
+            raw_inc = res.get("buffer", {}).get("inclination", {}).get("buffer", [0.0])[0]
+            p_inc = round(float(raw_inc), 1)
+            st.sidebar.success(f"📡 Phone Slope: {p_inc}°")
+        except Exception:
+            st.sidebar.warning("⚠️ Phone not reachable. Ensure same Wi-Fi.")
+    elif auto_tilt:
+        import time
+        p_inc = round(float(np.sin(time.time() * 0.7) * 9.0), 1)
+
 incline = st.sidebar.slider("Incline Angle (°: -Downhill, +Uphill)", -15.0, 15.0, float(p_inc), 0.5)
 
 st.sidebar.subheader("🛢️ Fuel & Vehicle State")
@@ -169,6 +195,16 @@ fuel_price = st.sidebar.number_input("Fuel Price (₹/L)", 50.0, 200.0, 95.0, 0.
 
 # Calculate results based on current slider values
 data = calculate_fuel_telematics(speed, rpm, accel, incline, payload, fuel_avail, temp, tire_psi, fuel_price)
+
+# Optimization recommendation banner for Live Slope
+if preset == "Live Slope Optimization":
+    if incline > 3.0:
+        rec_spd = max(35.0, round(65.0 - (incline * 2.2)))
+        st.warning(f"⛰️ **Steep Climb Detected ({incline}°):** Downshift gear & reduce cruising speed to **{rec_spd} km/h** to minimize gravitational fuel penalty.")
+    elif incline < -2.0:
+        st.success(f"📉 **Downhill Assist Detected ({incline}°):** Gravity provides tractive force. Maintain speed with zero throttle (fuel cut-off).")
+    else:
+        st.info(f"🛣️ **Level Terrain ({incline}°):** Optimal steady cruise speed is **65–75 km/h**.")
 
 # ==============================================================================
 # 4. TOP KPI METRIC CARDS
