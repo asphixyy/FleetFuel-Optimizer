@@ -174,9 +174,28 @@ if preset == "Live Slope Optimization":
     if sync_phone and phone_url:
         try:
             import requests
-            res = requests.get(f"{phone_url.rstrip('/')}/get?inclination", timeout=1.2).json()
-            raw_inc = res.get("buffer", {}).get("inclination", {}).get("buffer", [0.0])[0]
-            p_inc = round(float(raw_inc), 1)
+            # Fetch all active buffers from Phyphox
+            res = requests.get(f"{phone_url.rstrip('/')}/get", timeout=1.5).json()
+            buf = res.get("buffer", {})
+            
+            # Check for direct inclination/pitch first
+            if "inclination" in buf and len(buf["inclination"]["buffer"]) > 0:
+                p_inc = round(float(buf["inclination"]["buffer"][0]), 1)
+            elif "pitch" in buf and len(buf["pitch"]["buffer"]) > 0:
+                p_inc = round(float(buf["pitch"]["buffer"][0]), 1)
+            # Universal fallback: 'Acceleration with g' (available on all phones)
+            elif "accY" in buf and len(buf["accY"]["buffer"]) > 0:
+                ay = float(buf["accY"]["buffer"][0])
+                az = float(buf["accZ"]["buffer"][0]) if ("accZ" in buf and len(buf["accZ"]["buffer"]) > 0) else 9.81
+                # Calculate tilt/pitch from gravity components: theta = arctan2(ay, az)
+                calc_angle = np.degrees(np.arctan2(ay, az))
+                p_inc = round(float(np.clip(calc_angle, -15.0, 15.0)), 1)
+            elif "acc" in buf and len(buf["acc"]["buffer"]) > 0:
+                ay = float(buf["acc"]["buffer"][0])
+                p_inc = round(float(np.clip(np.degrees(np.arcsin(np.clip(ay / 9.81, -1.0, 1.0))), -15.0, 15.0)), 1)
+            else:
+                p_inc = 0.0
+
             st.sidebar.success(f"📡 Phone Slope: {p_inc}°")
         except Exception:
             st.sidebar.warning("⚠️ Phone not reachable. Ensure same Wi-Fi.")
