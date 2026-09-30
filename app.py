@@ -351,8 +351,21 @@ temp = st.sidebar.slider("Engine Coolant Temp (°C)", 20.0, 115.0, float(p_temp)
 tire_psi = st.sidebar.slider("Tire Pressure (PSI)", 20.0, 42.0, float(p_psi), 1.0)
 fuel_price = st.sidebar.number_input("Fuel Price (₹/L)", 50.0, 200.0, 95.0, 0.5)
 
-# Calculate results based on current slider values
+# OVERRIDE CALCULATION INPUTS WITH LIVE INGESTED TELEMETRY
+if preset == "Live Slope Optimization" and iot_source == "Cloud MQTT Broker":
+    if st.session_state.get("mqtt_incline") is not None:
+        incline = float(st.session_state["mqtt_incline"])
+    if st.session_state.get("mqtt_speed") is not None:
+        speed = float(st.session_state["mqtt_speed"])
+    if st.session_state.get("mqtt_rpm") is not None:
+        rpm = int(st.session_state["mqtt_rpm"])
+
+# Calculate results based on current slider or ingested telemetry values
 data = calculate_fuel_telematics(speed, rpm, accel, incline, payload, fuel_avail, temp, tire_psi, fuel_price)
+
+# Live Ingestion Status Banner
+if preset == "Live Slope Optimization" and iot_source == "Cloud MQTT Broker" and st.session_state.get("mqtt_last_time"):
+    st.info(f"⚡ **Live Cloud Telematics Ingested:** Incline = **{incline:+.1f}°** | Speed = **{speed:.1f} km/h** | RPM = **{rpm}** *(Updated at {st.session_state.get('mqtt_last_time')})*")
 
 # Optimization recommendation banner for Live Slope
 if preset == "Live Slope Optimization":
