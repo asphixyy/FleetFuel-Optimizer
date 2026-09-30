@@ -2,6 +2,54 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import json
+import time
+import paho.mqtt.client as mqtt
+import streamlit.components.v1 as components
+
+MQTT_BROKER = "broker.hivemq.com"
+MQTT_PORT = 1883
+MQTT_TOPIC = "fleetfuel/telematics"
+
+if "mqtt_init" not in st.session_state:
+    st.session_state["mqtt_init"] = True
+    st.session_state["mqtt_incline"] = None
+    st.session_state["mqtt_speed"] = None
+    st.session_state["mqtt_rpm"] = None
+    st.session_state["mqtt_last_time"] = None
+    st.session_state["mqtt_status"] = "Connecting..."
+
+    def _on_mqtt_connect(client, userdata, flags, rc, properties=None):
+        st.session_state["mqtt_status"] = "Connected"
+        client.subscribe(MQTT_TOPIC)
+        client.subscribe("fleetfuel/+/telematics")
+
+    def _on_mqtt_message(client, userdata, msg):
+        try:
+            payload = json.loads(msg.payload.decode())
+            if "incline" in payload:
+                st.session_state["mqtt_incline"] = round(float(payload["incline"]), 1)
+            if "speed" in payload:
+                st.session_state["mqtt_speed"] = round(float(payload["speed"]), 1)
+            if "rpm" in payload:
+                st.session_state["mqtt_rpm"] = int(payload["rpm"])
+            st.session_state["mqtt_last_time"] = time.strftime("%H:%M:%S")
+        except Exception:
+            pass
+
+    try:
+        mq_client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION2 if hasattr(mqtt, "CallbackAPIVersion") else None,
+            client_id=f"fleetfuel_dash_{int(time.time()*1000)%100000}"
+        )
+        mq_client.on_connect = _on_mqtt_connect
+        mq_client.on_message = _on_mqtt_message
+        mq_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+        mq_client.loop_start()
+        st.session_state["mq_client"] = mq_client
+        st.session_state["mqtt_status"] = "Connected"
+    except Exception as e:
+        st.session_state["mqtt_status"] = f"Offline ({e})"
 
 st.set_page_config(
     page_title="FleetFuel AI - Telematics Dashboard",
@@ -129,42 +177,129 @@ st.sidebar.subheader("⛰️ Road & Incline")
 
 auto_live = False
 if preset == "Live Slope Optimization":
-    st.sidebar.info("📱 **IoT Mode:** Stream slope live from phone motion sensors!")
-    phone_url = st.sidebar.text_input("Phone URL (Phyphox)", "http://172.16.87.170:8080")
-    c_btn1, c_btn2 = st.sidebar.columns(2)
-    with c_btn1:
-        sync_phone = st.button("📲 Poll Phone")
-    with c_btn2:
-        auto_live = st.checkbox("🔴 Live Stream", value=False)
+    st.sidebar.markdown("### 🌐 IoT Telematics Ingestion")
+    iot_source = st.sidebar.radio("Sensor Source", ["Cloud MQTT Broker", "Local Wi-Fi (Phyphox)"], horizontal=True)
 
-    if (sync_phone or auto_live) and phone_url:
-        try:
-            import requests
-            clean_url = phone_url.rstrip("/")
+    if iot_source == "Cloud MQTT Broker":
+        st.sidebar.caption("**Broker:** `broker.hivemq.com` • **Topic:** `fleetfuel/telematics`")
+        
+        mq_time = st.session_state.get("mqtt_last_time")
+        mq_inc = st.session_state.get("mqtt_incline")
+        if mq_time and mq_inc is not None:
+            st.sidebar.success(f"📡 **Live MQTT Packet:** Incline **{mq_inc}°** (at {mq_time})")
+            p_inc = mq_inc
+        else:
+            st.sidebar.info("⏳ Waiting for MQTT telemetry packets...")
+
+        components.html("""
+        <div style="background: rgba(14, 165, 233, 0.15); border: 1px solid rgba(14, 165, 233, 0.35); border-radius: 8px; padding: 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center;">
+          <div style="font-size: 11px; font-weight: bold; color: #38bdf8; margin-bottom: 6px; letter-spacing: 0.5px;">📱 BROWSER MOTION TRANSMITTER</div>
+          <button id="mqttSensorBtn" onclick="toggleMqttSensor()" style="background: #0284c7; color: white; border: none; padding: 7px 12px; border-radius: 5px; font-size: 12px; font-weight: bold; cursor: pointer; width: 100%;">
+            Enable This Phone's Sensor
+          </button>
+          <div id="mqttSensorStatus" style="font-size: 11px; margin-top: 6px; color: #94a3b8;">Tap above to broadcast phone tilt via MQTT</div>
+        </div>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+        <script>
+        let mqttClient = null;
+        let active = false;
+        let lastSent = 0;
+
+        function toggleMqttSensor() {
+          if (active) {
+            active = false;
+            document.getElementById("mqttSensorBtn").innerText = "Enable This Phone's Sensor";
+            document.getElementById("mqttSensorStatus").innerText = "Status: Stopped";
+            return;
+          }
+          if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            DeviceOrientationEvent.requestPermission().then(response => {
+              if (response === 'granted') startStreaming();
+              else alert('Motion permission denied.');
+            }).catch(e => startStreaming());
+          } else {
+            startStreaming();
+          }
+        }
+
+        function startStreaming() {
+          const clientId = "web_sender_" + Math.random().toString(16).substr(2, 8);
+          mqttClient = new Paho.MQTT.Client("broker.hivemq.com", 8884, "/mqtt", clientId);
+          mqttClient.connect({
+            useSSL: true,
+            onSuccess: function() {
+              active = true;
+              document.getElementById("mqttSensorBtn").innerText = "🛑 Stop Sensor";
+              document.getElementById("mqttSensorStatus").innerHTML = "🟢 <b style='color:#22c55e;'>Connected!</b> Tilt phone to transmit.";
+              window.addEventListener("deviceorientation", onOrientation);
+            },
+            onFailure: function(e) {
+              document.getElementById("mqttSensorStatus").innerHTML = "⚠️ MQTT error: " + e.errorMessage;
+            }
+          });
+        }
+
+        function onOrientation(event) {
+          if (!active) return;
+          const now = Date.now();
+          if (now - lastSent < 250) return;
+          lastSent = now;
+          let pitch = event.beta || 0;
+          pitch = Math.max(-15, Math.min(15, pitch));
+          document.getElementById("mqttSensorStatus").innerHTML = "📡 Incline: <b style='color:#38bdf8;'>" + pitch.toFixed(1) + "°</b>";
+          const msg = new Paho.MQTT.Message(JSON.stringify({ incline: parseFloat(pitch.toFixed(1)) }));
+          msg.destinationName = "fleetfuel/telematics";
+          mqttClient.send(msg);
+        }
+        </script>
+        """, height=110)
+
+        auto_live = st.sidebar.checkbox("🔴 Auto-Refresh Dashboard", value=True)
+
+    else:
+        st.sidebar.info("📱 **Local Wi-Fi Mode:** Direct polling from Phyphox app")
+        phone_url = st.sidebar.text_input("Phone URL (Phyphox)", "http://172.16.87.170:8080")
+        c_btn1, c_btn2 = st.sidebar.columns(2)
+        with c_btn1:
+            sync_phone = st.button("📲 Poll Phone")
+        with c_btn2:
+            auto_live = st.checkbox("🔴 Live Stream", value=False)
+
+        if (sync_phone or auto_live) and phone_url:
             try:
-                requests.get(f"{clean_url}/control?cmd=start", timeout=0.8)
+                import requests
+                clean_url = phone_url.rstrip("/")
+                try:
+                    requests.get(f"{clean_url}/control?cmd=start", timeout=0.8)
+                except Exception:
+                    pass
+                res = requests.get(f"{clean_url}/get?tiltFlatUD&angle&tiltUprightUD", timeout=1.5).json()
+                buf = res.get("buffer", {})
+                val = None
+                if "tiltFlatUD" in buf and len(buf["tiltFlatUD"].get("buffer", [])) > 0:
+                    val = buf["tiltFlatUD"]["buffer"][0]
+                elif "angle" in buf and len(buf["angle"].get("buffer", [])) > 0:
+                    val = buf["angle"]["buffer"][0]
+                elif "tiltUprightUD" in buf and len(buf["tiltUprightUD"].get("buffer", [])) > 0:
+                    val = buf["tiltUprightUD"]["buffer"][0]
+
+                if val is not None:
+                    p_inc = round(float(np.clip(val, -15.0, 15.0)), 1)
+                    st.session_state["live_slope_val"] = p_inc
+                    st.sidebar.success(f"📡 Slope: **{p_inc}°**")
+                else:
+                    st.sidebar.warning("⚠️ No tilt buffer received.")
             except Exception:
-                pass
-            res = requests.get(f"{clean_url}/get?tiltFlatUD&angle&tiltUprightUD", timeout=1.5).json()
-            buf = res.get("buffer", {})
-            val = None
-            if "tiltFlatUD" in buf and len(buf["tiltFlatUD"].get("buffer", [])) > 0:
-                val = buf["tiltFlatUD"]["buffer"][0]
-            elif "angle" in buf and len(buf["angle"].get("buffer", [])) > 0:
-                val = buf["angle"]["buffer"][0]
-            elif "tiltUprightUD" in buf and len(buf["tiltUprightUD"].get("buffer", [])) > 0:
-                val = buf["tiltUprightUD"]["buffer"][0]
+                st.sidebar.warning("⚠️ Phone not reachable.")
 
-            if val is not None:
-                p_inc = round(float(np.clip(val, -15.0, 15.0)), 1)
-                st.session_state["live_slope_val"] = p_inc
-                st.sidebar.success(f"📡 Slope: **{p_inc}°**")
-            else:
-                st.sidebar.warning("⚠️ No tilt buffer received.")
-        except Exception:
-            st.sidebar.warning("⚠️ Phone not reachable.")
+if preset == "Live Slope Optimization":
+    if st.session_state.get("mqtt_incline") is not None and iot_source == "Cloud MQTT Broker":
+        current_incline_val = float(st.session_state["mqtt_incline"])
+    else:
+        current_incline_val = float(st.session_state.get("live_slope_val", p_inc))
+else:
+    current_incline_val = float(p_inc)
 
-current_incline_val = float(st.session_state.get("live_slope_val", p_inc)) if preset == "Live Slope Optimization" else float(p_inc)
 incline = st.sidebar.slider("Incline Angle (°: -Downhill, +Uphill)", -15.0, 15.0, current_incline_val, 0.5)
 
 st.sidebar.subheader("🛢️ Fuel & Vehicle State")
