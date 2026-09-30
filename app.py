@@ -14,16 +14,23 @@ MQTT_BROKER = "broker.hivemq.com"
 MQTT_PORT = 1883
 MQTT_TOPIC = "fleetfuel/telematics"
 
-if "mqtt_init" not in st.session_state:
-    st.session_state["mqtt_init"] = True
-    st.session_state["mqtt_incline"] = None
-    st.session_state["mqtt_speed"] = None
-    st.session_state["mqtt_rpm"] = None
-    st.session_state["mqtt_last_time"] = None
-    st.session_state["mqtt_status"] = "Connecting..."
+# Thread-safe global store for background MQTT packets
+class MQTTTelemetryStore:
+    def __init__(self):
+        self.incline = None
+        self.speed = None
+        self.rpm = None
+        self.last_time = None
+        self.packet_count = 0
+        self.status = "Connecting..."
+        self.client = None
+
+if "global_telemetry_store" not in globals():
+    global_telemetry_store = MQTTTelemetryStore()
+    globals()["global_telemetry_store"] = global_telemetry_store
 
     def _on_mqtt_connect(client, userdata, flags, rc, properties=None):
-        st.session_state["mqtt_status"] = "Connected"
+        global_telemetry_store.status = "Connected"
         client.subscribe(MQTT_TOPIC)
         client.subscribe("fleetfuel/+/telematics")
 
@@ -31,12 +38,13 @@ if "mqtt_init" not in st.session_state:
         try:
             payload = json.loads(msg.payload.decode())
             if "incline" in payload:
-                st.session_state["mqtt_incline"] = round(float(payload["incline"]), 1)
+                global_telemetry_store.incline = round(float(payload["incline"]), 1)
             if "speed" in payload:
-                st.session_state["mqtt_speed"] = round(float(payload["speed"]), 1)
+                global_telemetry_store.speed = round(float(payload["speed"]), 1)
             if "rpm" in payload:
-                st.session_state["mqtt_rpm"] = int(payload["rpm"])
-            st.session_state["mqtt_last_time"] = time.strftime("%H:%M:%S")
+                global_telemetry_store.rpm = int(payload["rpm"])
+            global_telemetry_store.last_time = time.strftime("%H:%M:%S")
+            global_telemetry_store.packet_count += 1
         except Exception:
             pass
 
@@ -49,10 +57,12 @@ if "mqtt_init" not in st.session_state:
         mq_client.on_message = _on_mqtt_message
         mq_client.connect(MQTT_BROKER, MQTT_PORT, 60)
         mq_client.loop_start()
-        st.session_state["mq_client"] = mq_client
-        st.session_state["mqtt_status"] = "Connected"
+        global_telemetry_store.client = mq_client
+        global_telemetry_store.status = "Connected"
     except Exception as e:
-        st.session_state["mqtt_status"] = f"Offline ({e})"
+        global_telemetry_store.status = f"Offline ({e})"
+else:
+    global_telemetry_store = globals()["global_telemetry_store"]
 
 # ==============================================================================
 # 1. PAGE SETUP
@@ -222,13 +232,13 @@ if preset == "Live Slope Optimization":
         st.sidebar.caption(f"**Broker:** `broker.hivemq.com` • **Topic:** `fleetfuel/telematics`")
         
         # Display MQTT status & last packet received
-        mq_time = st.session_state.get("mqtt_last_time")
-        mq_inc = st.session_state.get("mqtt_incline")
+        mq_time = global_telemetry_store.last_time
+        mq_inc = global_telemetry_store.incline
+        mq_count = global_telemetry_store.packet_count
         if mq_time and mq_inc is not None:
-            st.sidebar.success(f"📡 **Live MQTT Packet:** Incline **{mq_inc}°** (at {mq_time})")
-            p_inc = mq_inc
+            st.sidebar.success(f"📡 **Live MQTT Active:** Incline **{mq_inc:+.1f}°**\n\n*(Packet #{mq_count} at {mq_time})*")
         else:
-            st.sidebar.info("⏳ Waiting for MQTT telemetry packets...")
+            st.sidebar.info(f"🟢 **MQTT Connected** (`{MQTT_BROKER}`)\n\nWaiting for sensor packets on `{MQTT_TOPIC}`...")
 
         # Embedded In-Browser Smartphone Sensor Transmitter
         components.html("""
@@ -298,7 +308,7 @@ if preset == "Live Slope Optimization":
 
     else:
         # Local Wi-Fi Phyphox polling
-        st.sidebar.info("📱 **Local Wi-Fi Mode:** Direct polling from Phyphox app")
+        st.sidebar.info("📱 **Local Wi-Fi Mode (Localhost Only):** Direct polling from Phyphox app on same Wi-Fi.\n\n*(Note: On cloud links, use Cloud MQTT Broker)*")
         phone_url = st.sidebar.text_input("Phone URL (Phyphox)", "http://172.16.87.170:8080", help="Copy the URL shown on your phone's Phyphox screen")
         c_btn1, c_btn2 = st.sidebar.columns(2)
         with c_btn1:
@@ -331,18 +341,22 @@ if preset == "Live Slope Optimization":
                 else:
                     st.sidebar.warning("⚠️ No tilt buffer received. Ensure Phyphox is measuring.")
             except Exception:
-                st.sidebar.warning("⚠️ Phone not reachable. Check Wi-Fi.")
+                st.sidebar.warning("⚠️ Phone not reachable. Ensure dashboard is running locally on same Wi-Fi.")
 
-# Determine current incline from session state if in Live Slope mode
-if preset == "Live Slope Optimization":
-    if st.session_state.get("mqtt_incline") is not None and iot_source == "Cloud MQTT Broker":
-        current_incline_val = float(st.session_state["mqtt_incline"])
-    else:
-        current_incline_val = float(st.session_state.get("live_slope_val", p_inc))
+# Determine current incline from IoT source or manual slider
+if preset == "Live Slope Optimization" and iot_source == "Cloud MQTT Broker" and global_telemetry_store.incline is not None:
+    incline = float(np.clip(global_telemetry_store.incline, -15.0, 15.0))
+    st.sidebar.metric("Live Telemetry Incline", f"{incline:+.1f}°")
+    # Also update speed & RPM if provided by MQTT
+    if global_telemetry_store.speed is not None:
+        speed = float(global_telemetry_store.speed)
+    if global_telemetry_store.rpm is not None:
+        rpm = int(global_telemetry_store.rpm)
+elif preset == "Live Slope Optimization" and iot_source == "Local Wi-Fi (Phyphox)":
+    current_incline_val = float(st.session_state.get("live_slope_val", p_inc))
+    incline = st.sidebar.slider("Incline Angle (°: -Downhill, +Uphill)", -15.0, 15.0, current_incline_val, 0.5)
 else:
-    current_incline_val = float(p_inc)
-
-incline = st.sidebar.slider("Incline Angle (°: -Downhill, +Uphill)", -15.0, 15.0, current_incline_val, 0.5)
+    incline = st.sidebar.slider("Incline Angle (°: -Downhill, +Uphill)", -15.0, 15.0, float(p_inc), 0.5)
 
 st.sidebar.subheader("🛢️ Fuel & Vehicle State")
 fuel_avail = st.sidebar.slider("Fuel in Tank (Liters)", 2.0, 120.0, float(p_fuel), 1.0)
@@ -351,21 +365,8 @@ temp = st.sidebar.slider("Engine Coolant Temp (°C)", 20.0, 115.0, float(p_temp)
 tire_psi = st.sidebar.slider("Tire Pressure (PSI)", 20.0, 42.0, float(p_psi), 1.0)
 fuel_price = st.sidebar.number_input("Fuel Price (₹/L)", 50.0, 200.0, 95.0, 0.5)
 
-# OVERRIDE CALCULATION INPUTS WITH LIVE INGESTED TELEMETRY
-if preset == "Live Slope Optimization" and iot_source == "Cloud MQTT Broker":
-    if st.session_state.get("mqtt_incline") is not None:
-        incline = float(st.session_state["mqtt_incline"])
-    if st.session_state.get("mqtt_speed") is not None:
-        speed = float(st.session_state["mqtt_speed"])
-    if st.session_state.get("mqtt_rpm") is not None:
-        rpm = int(st.session_state["mqtt_rpm"])
-
-# Calculate results based on current slider or ingested telemetry values
+# Calculate results based on current slider values
 data = calculate_fuel_telematics(speed, rpm, accel, incline, payload, fuel_avail, temp, tire_psi, fuel_price)
-
-# Live Ingestion Status Banner
-if preset == "Live Slope Optimization" and iot_source == "Cloud MQTT Broker" and st.session_state.get("mqtt_last_time"):
-    st.info(f"⚡ **Live Cloud Telematics Ingested:** Incline = **{incline:+.1f}°** | Speed = **{speed:.1f} km/h** | RPM = **{rpm}** *(Updated at {st.session_state.get('mqtt_last_time')})*")
 
 # Optimization recommendation banner for Live Slope
 if preset == "Live Slope Optimization":
