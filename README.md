@@ -89,6 +89,7 @@ Directly models **Page 7** of the project specification, breaking down the exact
 ## 🚀 5. Quick Scenario Presets
 
 Test pre-configured fleet operational scenarios with a single click from the sidebar dropdown:
+- **🔋 Maximum Range Extender (Eco-Max)**: 44 km/h, 1300 RPM, 0 kg payload, 120 L fuel, flat road, 36 PSI tires (achieves max theoretical distance of ~1,630+ km).
 - **🌱 Optimal Highway Cruising (Eco)**: 80 km/h, 1600 RPM, flat ground, 36 PSI tires.
 - **⛰️ Steep Mountain Climb (High Load)**: 45 km/h, 2600 RPM, +8.5° ascent, 6,500 kg payload.
 - **📉 Downhill Descent (Engine Braking)**: 60 km/h, 1400 RPM, -6.5° descent, zero fuel boost.

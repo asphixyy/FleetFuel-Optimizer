@@ -130,6 +130,7 @@ preset = st.sidebar.selectbox(
     "Quick Scenario Presets",
     [
         "Custom Slider Controls",
+        "Maximum Range Extender",
         "Optimal Highway Cruise",
         "Steep Mountain Climb",
         "Downhill Descent",
@@ -138,14 +139,15 @@ preset = st.sidebar.selectbox(
     ]
 )
 
-# Preset default values
+# Preset default values (speed, rpm, accel, incline, payload, fuel_avail, temp, tire_psi)
 defaults = {
-    "Optimal Highway Cruise":  (80.0, 1600,  0.0,  0.0, 2000.0, 75.0, 88.0, 36.0),
-    "Steep Mountain Climb":    (45.0, 2600,  0.8,  8.5, 6500.0, 50.0, 95.0, 34.0),
-    "Downhill Descent":        (60.0, 1400, -0.5, -6.5, 3000.0, 40.0, 85.0, 35.0),
-    "Aggressive City Driving": (55.0, 3200,  2.2,  1.0, 2500.0, 30.0, 90.0, 31.0),
-    "Stationary Idling":       (0.0,  850,   0.0,  0.0, 4000.0, 65.0, 80.0, 35.0),
-    "Custom Slider Controls":  (68.0, 1850,  0.2,  2.5, 3500.0, 55.0, 88.0, 33.0)
+    "Maximum Range Extender":  (44.0, 1300,  0.0,  0.0,    0.0, 120.0, 90.0, 36.0),
+    "Optimal Highway Cruise":  (80.0, 1600,  0.0,  0.0, 2000.0,  75.0, 88.0, 36.0),
+    "Steep Mountain Climb":    (45.0, 2600,  0.8,  8.5, 6500.0,  50.0, 95.0, 34.0),
+    "Downhill Descent":        (60.0, 1400, -0.5, -6.5, 3000.0,  40.0, 85.0, 35.0),
+    "Aggressive City Driving": (55.0, 3200,  2.2,  1.0, 2500.0,  30.0, 90.0, 31.0),
+    "Stationary Idling":       (0.0,  850,   0.0,  0.0, 4000.0,  65.0, 80.0, 35.0),
+    "Custom Slider Controls":  (68.0, 1850,  0.2,  2.5, 3500.0,  55.0, 88.0, 33.0)
 }
 p_spd, p_rpm, p_acc, p_inc, p_load, p_fuel, p_temp, p_psi = defaults[preset]
 
