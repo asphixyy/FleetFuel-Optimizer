@@ -1,21 +1,21 @@
 # ⚡ FleetFuel AI: IoT Predictive Fuel Telematics & Optimization Platform
 
 > **Physics-Informed Vehicle Telematics, Real-Time Sensor Ingestion, and Inefficiency Attribution**  
-> *A full-stack automotive telematics system that ingests live vehicle and smartphone sensor data, models vehicle dynamics using SAE automotive physics, predicts expected fuel consumption, explains the root causes of fuel waste, and estimates financial loss.*
+> *A full-stack automotive telematics platform that ingests live vehicle and smartphone sensor data, models vehicle dynamics using SAE automotive physics, predicts expected fuel consumption, explains the root causes of fuel waste, and estimates financial loss.*
 
 ---
 
 ## 📌 1. Project Overview & Problem Statement
 
 ### The Problem
-Commercial fleets and heavy transport vehicles lose thousands of liters of fuel every month. Traditional fleet tracking systems only track GPS location, leaving fleet operators wondering:
-* *Why is Truck A consuming 40% more fuel than Truck B on the same route?*
-* *Is the excess fuel caused by a steep mountain climb, an aggressive driver, underinflated tires, or prolonged depot idling?*
+Commercial fleets and heavy transport vehicles lose thousands of liters of fuel every month. Traditional fleet management systems only track GPS dots on a map, leaving fleet managers unable to answer critical questions:
+* *Why is Truck A consuming 40% more fuel than Truck B on the same delivery route?*
+* *Is excess fuel consumption caused by a steep mountain climb, aggressive acceleration, underinflated tires, or prolonged idling?*
 
 ### The Solution: FleetFuel AI
-**FleetFuel AI** bridges the gap between raw vehicle sensors and actionable fleet intelligence. Instead of treating fuel consumption as a black-box mystery, FleetFuel AI operates on four core pillars:
+**FleetFuel AI** bridges the gap between raw vehicle sensors and actionable fleet intelligence. Operating on four core pillars:
 
-1. **SENSE**: Ingests live telemetry from smartphones (gyroscopes/accelerometers), IoT devices (ESP32/OBD-II), or simulated trucks via **MQTT** and **REST APIs**.
+1. **SENSE**: Ingests live telemetry from smartphones (gyroscopes/accelerometers), IoT devices (ESP32/OBD-II), or simulated trucks via **MQTT (TCP & WebSockets)** and **REST APIs**.
 2. **PREDICT**: Computes expected fuel consumption using rigorous **SAE automotive physics equations** (aerodynamic drag, rolling friction, gravitational gradient, and inertial acceleration).
 3. **EXPLAIN**: Performs **SHAP-style root-cause decomposition** to pinpoint exactly which factors (hill ascent, harsh acceleration, aerodynamic drag, high RPM, or flat tires) caused the fuel spike.
 4. **OPTIMIZE & MEASURE**: Translates wasted liters into real-time financial impact (₹/hour) and provides dynamic driving recommendations (e.g., target cruising speeds, gear-shift advice).
@@ -46,7 +46,7 @@ Commercial fleets and heavy transport vehicles lose thousands of liters of fuel 
  ┌────────────────────────────────────────────────────────────────────────┐
  │              PROCESSING & VEHICLE DYNAMICS ENGINE                      │
  │    • SAE Classical Physics Model (Force -> Power -> Fuel Rate)         │
- │    • Thread-Safe Singleton Telemetry Store (@st.cache_resource)        │
+ │    • Persistent Singleton Telemetry Store (@st.cache_resource)         │
  │    • SHAP-Style Inefficiency Factor Decomposition                      │
  └────────────────────────────────────────────────────────────────────────┘
                                 │
@@ -62,9 +62,9 @@ Commercial fleets and heavy transport vehicles lose thousands of liters of fuel 
 
 ---
 
-## 🔬 3. Automotive Physics Engine Explained (For Beginners)
+## 🔬 3. Automotive Physics Engine Explained
 
-The vehicle model in [`calculate_fuel_telematics()`](file:///c:/Users/gy897/OneDrive/Desktop/New%20folder/app.py#L120) calculates fuel consumption using classical mechanics in 5 simple steps:
+The vehicle model in [`calculate_fuel_telematics()`](file:///c:/Users/gy897/OneDrive/Desktop/New%20folder/app.py) calculates fuel consumption using classical mechanics in 5 simple steps:
 
 ### Step 1: Unit Conversion
 Vehicle speed is measured in $km/h$, but physics formulas require meters per second ($m/s$):
@@ -72,7 +72,7 @@ $$\text{Velocity } (v) = \frac{\text{Speed (km/h)}}{3.6}$$
 $$\text{Total Mass } (m) = 4,800\text{ kg (Base Truck)} + \text{Cargo Payload (kg)}$$
 
 ### Step 2: The 4 Resistive Forces (in Newtons)
-When a vehicle drives, the engine must overcome four physical forces:
+When a vehicle drives, the powertrain must overcome four physical forces:
 
 | Force | Formula | Meaning in Plain English |
 | :--- | :--- | :--- |
@@ -113,31 +113,70 @@ FleetFuel AI allows any smartphone to act as an automotive tilt sensor:
 
 ---
 
-## 📊 5. Dashboard Features & Visualizations
+## 🎛️ 5. Interactive Sliding Controls (Telemetry Inputs)
 
-1. **Top KPI Metric Cards**:
-   * **Actual Fuel Rate ($L/h$)**: Current real-time burn rate.
-   * **Expected Baseline ($L/h$)**: Optimal consumption under ideal conditions.
-   * **Fuel Economy ($km/L$)**: Distance traveled per liter of fuel.
-   * **Estimated Driving Range ($km$)**: How far the truck can travel on remaining tank fuel.
-   * **Excess Cost Impact ($\text{₹}/hr$)**: Monetary loss from inefficient driving.
+The Streamlit dashboard gives operators and engineers real-time sliding options across vehicle telematics categories:
 
-2. **Operating Curve & Real-Time Operating Point**:
-   * Plots the theoretical baseline curve alongside the current real-time operating point.
-   * Color-coded status: Emerald Green (Optimal), Amber (Moderate), Rose Red (Wasteful).
-
-3. **SHAP-Style Root-Cause Inefficiency Breakdown**:
-   * Horizontal bar chart attributing excess fuel to specific causes: Base Cruising, Hill Gradient, Harsh Acceleration, Aero Drag, High RPM, and Low Tire Pressure.
-
-4. **Fuel Depletion Horizon**:
-   * Visualizes remaining fuel over trip distance with a **10-Liter Critical Reserve Line**.
+| Control Slider | Range | Units | Technical Significance |
+| :--- | :--- | :--- | :--- |
+| **🚗 Vehicle Speed** | `0.0 – 140.0` | `km/h` | Determines vehicle velocity, distance rate, and aerodynamic drag force ($F_{aero} \propto v^2$). |
+| **⚙️ Engine RPM** | `600 – 5,000` | `RPM` | Determines internal engine friction, BSFC operating band, and transmission gear efficiency. |
+| **💨 Acceleration / Braking** | `-4.0 – +4.0` | `m/s²` | Negative represents braking; positive represents inertial demand ($F = m \cdot a$). |
+| **📐 Incline Angle (Ascent / Descent)** | `-15.0 – +15.0` | `degrees (°)` | **Ascent (+)** increases gravitational load ($m \cdot g \cdot \sin\theta$). **Descent (-)** enables fuel cut-off. Can be fed live from smartphone gyroscope! |
+| **🛢️ Fuel Availability in Tank** | `2.0 – 120.0` | `Liters` | Tracks live tank capacity to calculate real-time driving range and fuel depletion curves. |
+| **📦 Cargo Payload** | `0 – 10,000` | `kg` | Directly inflates gross vehicle weight, increasing rolling resistance and uphill gradient forces. |
+| **🌡️ Coolant / Engine Temp** | `20 – 115` | `°C` | Cold starts (<80°C) cause cold-engine enrichment penalties; optimal steady state is 85–95°C. |
+| **🔘 Tire Pressure** | `20 – 42` | `PSI` | Under-inflation (<32 PSI) increases tire deformation and rolling resistance coefficient ($C_{rr}$). |
+| **💵 Fuel Price** | `50.0 – 200.0` | `₹/L` | Translates excess liters burned into operational financial loss per hour (₹/hr). |
 
 ---
 
-## 🚀 6. How to Run Locally
+## 📊 6. Simultaneous Dynamic Visualizations
+
+As you slide any parameter (or tilt your phone), the dashboard computes the physical telemetry equations instantaneously:
+
+### 1. **Operating Curve & Real-Time Operating Point (L/h vs Speed)**
+- Plots the theoretical **Optimal Expected Baseline** (dashed cyan line) under ideal cruising conditions.
+- Plots the **Current Condition Steady-State Curve** (solid indigo line) factoring in current payload weight, road incline angle, and tire pressure across 0–140 km/h.
+- Dynamically highlights **Your Current Operating Point** with a glowing diamond marker:
+  - 🟢 **Emerald Green:** Fuel rate within ±10% of optimal target.
+  - 🟡 **Amber Yellow:** Fuel rate moderately elevated (10% to 35% above target).
+  - 🔴 **Rose Red:** Severe fuel penalty (>35% above target).
+
+### 2. **SHAP-Style Root-Cause Inefficiency Breakdown**
+Horizontal waterfall-style breakdown attributing excess fuel consumption to specific mechanical sources:
+- **Base Cruise**: Baseline propulsion power.
+- **Gradient / Ascent Incline**: Additional fuel burned to overcome gravity uphill.
+- **Harsh Acceleration**: Fuel spike caused by inertial surges.
+- **Aerodynamic Drag**: High-speed quadratic resistance.
+- **High RPM Overhead**: Fuel penalty caused by delayed upshifting.
+- **Underinflated Tires**: Mechanical resistance from improper tire pressure.
+- **Stationary Idling**: Fuel consumed while stopped.
+
+### 3. **Fuel Depletion & Range Forecast**
+- Real-time simulation showing projected fuel level in the tank over trip distance.
+- Features a **Critical Reserve Threshold (10 L)** warning horizon.
+- Instantly estimates total remaining driving range (km) and operational endurance (hours).
+
+---
+
+## 🚀 7. Quick Scenario Presets
+
+Test pre-configured fleet operational scenarios with a single click from the sidebar dropdown:
+- **📱 Live Slope Optimization (IoT)**: Streams live road gradient from your smartphone gyroscope via MQTT or Phyphox, delivering real-time eco-speed advice.
+- **🔋 Maximum Range Extender (Eco-Max)**: 44 km/h, 1300 RPM, 0 kg payload, 120 L fuel, flat road, 36 PSI tires (achieves max theoretical distance of ~1,632 km).
+- **🌱 Optimal Highway Cruising (Eco)**: 80 km/h, 1600 RPM, flat ground, 36 PSI tires.
+- **⛰️ Steep Mountain Climb (High Load)**: 45 km/h, 2600 RPM, +8.5° ascent, 6,500 kg payload.
+- **📉 Downhill Descent (Engine Braking)**: 60 km/h, 1400 RPM, -6.5° descent, zero fuel boost.
+- **⚡ Aggressive City Driving**: 55 km/h, 3200 RPM, 2.4 m/s² harsh acceleration, 31 PSI tires.
+- **🛑 Stationary Idle (Depot / Loading Bay)**: 0 km/h, 850 RPM, engine on, 1.2 L/h stationary waste.
+
+---
+
+## 💻 8. How to Run Locally
 
 ### Prerequisites
-* Python 3.9, 3.10, 3.11, 3.12, or 3.13 installed.
+* Python 3.9+ installed.
 
 ### 1. Clone the Repository
 ```bash
@@ -158,7 +197,7 @@ Open your browser and navigate to **`http://localhost:8501`**.
 
 ---
 
-## 🌐 7. Public Sharing (Two Deployment Options)
+## 🌐 9. Public Deployment Options
 
 ### Option 1: Streamlit Community Cloud (Permanent Cloud Link)
 1. Fork or push this repository to your GitHub account.
@@ -174,7 +213,7 @@ Cloudflare will provide a temporary `trycloudflare.com` URL that tunnels directl
 
 ---
 
-## 📁 8. Project File Structure
+## 📁 10. Repository File Structure
 
 ```text
 FleetFuel-Optimizer/
@@ -184,12 +223,12 @@ FleetFuel-Optimizer/
 ├── simulate_iot_truck.py # Standalone CLI Python script simulating live truck telemetry via MQTT
 ├── requirements.txt      # Required Python packages (streamlit, plotly, paho-mqtt, etc.)
 ├── cloudflared.exe       # Cloudflare Tunnel binary for local proxying
-└── README.md             # Complete technical documentation and beginner's guide
+└── README.md             # Complete technical documentation and user guide
 ```
 
 ---
 
-## 🎓 9. Beginner's Viva / Interview Cheatsheet
+## 🎓 11. Beginner's Viva / Interview Cheatsheet
 
 ### Q1: What is the primary objective of FleetFuel AI?
 > **Answer:** FleetFuel AI is an automotive telematics platform that predicts expected vehicle fuel consumption using physics models, detects inefficiencies (such as steep slopes, aggressive acceleration, or high RPM), and attributes fuel waste to specific root causes with financial cost impact.
