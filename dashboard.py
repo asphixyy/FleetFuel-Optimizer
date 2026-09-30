@@ -127,42 +127,45 @@ accel = st.sidebar.slider("Acceleration / Braking (m/s²)", -4.0, 4.0, float(p_a
 
 st.sidebar.subheader("⛰️ Road & Incline")
 
+auto_live = False
 if preset == "Live Slope Optimization":
     st.sidebar.info("📱 **IoT Mode:** Stream slope live from phone motion sensors!")
-    phone_url = st.sidebar.text_input("Phone URL (Phyphox)", "http://192.168.1.15:8080")
+    phone_url = st.sidebar.text_input("Phone URL (Phyphox)", "http://172.16.87.170:8080")
     c_btn1, c_btn2 = st.sidebar.columns(2)
     with c_btn1:
         sync_phone = st.button("📲 Poll Phone")
     with c_btn2:
-        auto_tilt = st.checkbox("Auto-Demo", value=False)
+        auto_live = st.checkbox("🔴 Live Stream", value=False)
 
-    if sync_phone and phone_url:
+    if (sync_phone or auto_live) and phone_url:
         try:
             import requests
-            res = requests.get(f"{phone_url.rstrip('/')}/get", timeout=1.5).json()
+            clean_url = phone_url.rstrip("/")
+            try:
+                requests.get(f"{clean_url}/control?cmd=start", timeout=0.8)
+            except Exception:
+                pass
+            res = requests.get(f"{clean_url}/get?tiltFlatUD&angle&tiltUprightUD", timeout=1.5).json()
             buf = res.get("buffer", {})
-            if "inclination" in buf and len(buf["inclination"]["buffer"]) > 0:
-                p_inc = round(float(buf["inclination"]["buffer"][0]), 1)
-            elif "pitch" in buf and len(buf["pitch"]["buffer"]) > 0:
-                p_inc = round(float(buf["pitch"]["buffer"][0]), 1)
-            elif "accY" in buf and len(buf["accY"]["buffer"]) > 0:
-                ay = float(buf["accY"]["buffer"][0])
-                az = float(buf["accZ"]["buffer"][0]) if ("accZ" in buf and len(buf["accZ"]["buffer"]) > 0) else 9.81
-                calc_angle = np.degrees(np.arctan2(ay, az))
-                p_inc = round(float(np.clip(calc_angle, -15.0, 15.0)), 1)
-            elif "acc" in buf and len(buf["acc"]["buffer"]) > 0:
-                ay = float(buf["acc"]["buffer"][0])
-                p_inc = round(float(np.clip(np.degrees(np.arcsin(np.clip(ay / 9.81, -1.0, 1.0))), -15.0, 15.0)), 1)
+            val = None
+            if "tiltFlatUD" in buf and len(buf["tiltFlatUD"].get("buffer", [])) > 0:
+                val = buf["tiltFlatUD"]["buffer"][0]
+            elif "angle" in buf and len(buf["angle"].get("buffer", [])) > 0:
+                val = buf["angle"]["buffer"][0]
+            elif "tiltUprightUD" in buf and len(buf["tiltUprightUD"].get("buffer", [])) > 0:
+                val = buf["tiltUprightUD"]["buffer"][0]
+
+            if val is not None:
+                p_inc = round(float(np.clip(val, -15.0, 15.0)), 1)
+                st.session_state["live_slope_val"] = p_inc
+                st.sidebar.success(f"📡 Slope: **{p_inc}°**")
             else:
-                p_inc = 0.0
-            st.sidebar.success(f"📡 Slope: {p_inc}°")
+                st.sidebar.warning("⚠️ No tilt buffer received.")
         except Exception:
             st.sidebar.warning("⚠️ Phone not reachable.")
-    elif auto_tilt:
-        import time
-        p_inc = round(float(np.sin(time.time() * 0.7) * 9.0), 1)
 
-incline = st.sidebar.slider("Incline Angle (°: -Downhill, +Uphill)", -15.0, 15.0, float(p_inc), 0.5)
+current_incline_val = float(st.session_state.get("live_slope_val", p_inc)) if preset == "Live Slope Optimization" else float(p_inc)
+incline = st.sidebar.slider("Incline Angle (°: -Downhill, +Uphill)", -15.0, 15.0, current_incline_val, 0.5)
 
 st.sidebar.subheader("🛢️ Fuel & Vehicle State")
 fuel_avail = st.sidebar.slider("Fuel in Tank (Liters)", 2.0, 120.0, float(p_fuel), 1.0)
@@ -288,3 +291,8 @@ with tab3:
     st.plotly_chart(fig_dep, use_container_width=True)
 
 st.caption("FleetFuel AI Telematics System • Simple, Explainable Vehicle Fuel Intelligence")
+
+if preset == "Live Slope Optimization" and auto_live:
+    import time
+    time.sleep(1.0)
+    st.rerun()
