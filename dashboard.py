@@ -101,104 +101,48 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ FLEETFUEL AI: Predictive Fuel Telematics Platform")
-st.caption("Real-Time Vehicle Dynamics, ML Inefficiency Detection & Operational Intelligence")
+st.title("⚡ FLEETFUEL : Predictive Fuel Telematics Platform")
+st.caption("Real-Time Vehicle Dynamics, Fuel Inefficiency Detection & Operational Intelligence")
 
-# ==============================================================================
-# 2. VEHICLE DYNAMICS & FUEL PREDICTION ENGINE (PHYSICS MODEL)
-# ==============================================================================
-# This function is the mathematical heart of the project.
-# It takes current vehicle telemetry (speed, rpm, slope, weight, etc.) and
-# uses classical automotive physics (SAE equations) to calculate:
-#   1. Total mechanical resistive force (Newtons)
-#   2. Engine power demand (Kilowatts)
-#   3. Actual fuel consumption rate (Liters per hour)
-#   4. Ideal expected baseline fuel rate (Liters per hour)
-#   5. Excess fuel waste, driving range, and hourly cost impact
-# ==============================================================================
 def calculate_fuel_telematics(speed, rpm, accel, incline, payload, fuel_avail, temp, psi, fuel_price=95.0):
-    # STEP 1: Unit Conversions
-    # Physics formulas require velocity in meters per second (m/s).
-    # 1 km/h = 1000m / 3600s = 1 / 3.6 m/s
     v_ms = speed / 3.6
-    
-    # Base truck tare weight is 4,800 kg + any cargo payload added by user
     total_mass = 4800.0 + payload
-    
-    # Convert slope angle from degrees to radians for trigonometric functions
     theta = np.radians(incline)
 
-    # STEP 2: The 4 Physical Resistive Forces (in Newtons)
-    # Force 1: Aerodynamic Drag (air resistance against vehicle body)
-    # Formula: F_aero = 0.5 * rho * Cd * A * v^2
-    #   1.225 = air density (kg/m^3) at sea level
-    #   0.55  = drag coefficient (Cd) for a typical commercial delivery truck
-    #   4.2   = frontal cross-sectional area (A) in square meters
     f_aero = 0.5 * 1.225 * 0.55 * 4.2 * (v_ms ** 2)
-
-    # Force 2: Rolling Resistance (friction between tires and the road surface)
-    # Under-inflated tires (<35 PSI) deform more and create extra drag
     crr = 0.012 + (max(0.0, (35.0 - psi) * 0.0004) if psi < 35.0 else 0.0)
-    # F_roll = Crr * Mass * Gravity * cos(slope)
     f_roll = crr * total_mass * 9.81 * np.cos(theta)
-
-    # Force 3: Gravitational Gradient Force (uphill pull vs downhill assist)
-    # F_grade = Mass * Gravity * sin(slope)
-    # When incline > 0 (climbing a hill), gravity pulls the truck backward (requires fuel).
-    # When incline < 0 (descending), gravity pushes the truck forward (saves fuel).
     f_grade = total_mass * 9.81 * np.sin(theta)
-
-    # Force 4: Inertial Acceleration Force (Newton's 2nd Law: F = m * a)
-    # Accelerating demands heavy engine torque; braking (accel <= 0) does not consume fuel.
     f_accel = total_mass * accel if accel > 0 else 0.0
 
-    # STEP 3: Total Tractive Force & Mechanical Power Demand
-    # Sum of all resistive forces that the engine must overcome
     total_force = f_aero + f_roll + f_grade + f_accel
-    # Power (kW) = (Force in Newtons * Velocity in m/s) / 1000
     power_kw = max(0.0, (total_force * v_ms) / 1000.0)
 
-    # STEP 4: Engine Efficiency Penalties
-    # Penalty A: Cold Engine Penalty (coolant temp < 85°C burns extra fuel for warm-up)
     cold_penalty = 1.0 + max(0.0, (85.0 - temp) * 0.003)
-    # Penalty B: High RPM / Gear Mismatch Penalty (operating above 1800 RPM wastes fuel)
     rpm_penalty = 1.0 + (0.15 * ((rpm / 1600.0) - 1.0) ** 2 if rpm > 1800 else 0.0)
 
-    # Base Idling Fuel Consumption: ~1.2 Liters/hour at standard 800 RPM idle
     idle_lh = 1.2 * (rpm / 800.0)
 
-    # STEP 5: Calculate Actual vs Expected (Optimal) Fuel Consumption (L/h)
     if speed < 1.0:
-        # Stationary state (Idling at depot or traffic lights)
         actual_lh = idle_lh * cold_penalty
         expected_lh = idle_lh
     else:
-        # Cruising state: Base auxiliary power + brake-specific fuel consumption (BSFC)
-        # 0.265 = empirical BSFC factor converting mechanical kW to diesel liters/hour (~225 g/kWh)
         actual_lh = (idle_lh * 0.4) + (power_kw * 0.265 * cold_penalty * rpm_penalty)
-        
-        # Expected Baseline: What the truck WOULD burn under ideal eco-driving
-        # (flat road 0° incline, proper 35 PSI tires, steady cruising speed)
         opt_power = ((0.012 * total_mass * 9.81 + f_aero) * v_ms) / 1000.0
         expected_lh = (idle_lh * 0.35) + (opt_power * 0.25)
 
-    # Safety minimum clamp: A running diesel engine always burns at least 0.5-0.6 L/h
     actual_lh = max(0.6, actual_lh)
     expected_lh = max(0.5, expected_lh)
 
-    # STEP 6: Operational & Financial Key Performance Indicators (KPIs)
-    excess_fuel_lh = actual_lh - expected_lh                   # Excess fuel burned per hour (L/h)
-    dev_pct = (excess_fuel_lh / expected_lh) * 100.0          # Percentage deviation vs ideal
-    km_per_l = (speed / actual_lh) if speed > 1.0 else 0.0     # Fuel economy (km per Liter)
-    l_per_100km = (actual_lh / speed * 100.0) if speed > 1.0 else 99.9  # Standard European economy
-    waste_cost_per_hr = max(0.0, excess_fuel_lh) * fuel_price  # Financial loss per hour (₹/hr)
+    excess_fuel_lh = actual_lh - expected_lh
+    dev_pct = (excess_fuel_lh / expected_lh) * 100.0
+    km_per_l = (speed / actual_lh) if speed > 1.0 else 0.0
+    l_per_100km = (actual_lh / speed * 100.0) if speed > 1.0 else 99.9
+    waste_cost_per_hr = max(0.0, excess_fuel_lh) * fuel_price
 
-    # STEP 7: Range & Endurance Forecast
-    remaining_hours = fuel_avail / actual_lh                  # How many hours fuel will last
-    remaining_range_km = remaining_hours * speed              # Estimated distance remaining (km)
+    remaining_hours = fuel_avail / actual_lh
+    remaining_range_km = remaining_hours * speed
 
-    # STEP 8: Root-Cause Decomposition (SHAP-style Inefficiency Attribution)
-    # Breaks down exactly how many liters/hour each driving factor contributes:
     factors = {
         "Base Cruising": round(max(0.2, expected_lh * 0.6), 2),
         "Hill Gradient (Ascent)": round(max(0.0, (f_grade * v_ms / 1000.0) * 0.26), 2) if incline > 0 else 0.0,
@@ -208,7 +152,6 @@ def calculate_fuel_telematics(speed, rpm, accel, incline, payload, fuel_avail, t
         "Underinflated Tires": round(max(0.0, 0.4 if psi < 32 else 0.0), 2)
     }
 
-    # Return clean dictionary of all results for display on graphs & metrics
     return {
         "actual_lh": round(actual_lh, 2),
         "expected_lh": round(expected_lh, 2),
