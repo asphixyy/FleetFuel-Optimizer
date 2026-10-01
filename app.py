@@ -86,7 +86,7 @@ global_telemetry_store = get_mqtt_telemetry_store()
 # 1. PAGE SETUP
 # ==============================================================================
 st.set_page_config(
-    page_title="FleetFuel AI - Telematics Dashboard",
+    page_title="FleetFuel - Telematics Dashboard",
     page_icon="⚡",
     layout="wide"
 )
@@ -118,40 +118,64 @@ st.caption("Real-Time Vehicle Dynamics, Fuel Inefficiency Detection & Operationa
 # 2. VEHICLE DYNAMICS & FUEL PREDICTION FUNCTION
 # ==============================================================================
 def calculate_fuel_telematics(speed, rpm, accel, incline, payload, fuel_avail, temp, psi, fuel_price=95.0):
-    v_ms = speed / 3.6
-    total_mass = 4800.0 + payload
-    theta = np.radians(incline)
+    """
+    Computes vehicle forces, power demand, and expected vs actual fuel consumption.
+    Simple to explain to judges:
+    Total Force = Aero Drag + Rolling Resistance + Hill Gradient + Acceleration Force
+    """
+    v_ms = speed / 3.6                          # Convert km/h to m/s
+    total_mass = 4800.0 + payload               # 4800 kg base vehicle weight + cargo (kg)
+    theta = np.radians(incline)                 # Incline angle in radians
+
+    # 1. Aerodynamic drag force: F = 0.5 * rho * Cd * A * v^2
     f_aero = 0.5 * 1.225 * 0.55 * 4.2 * (v_ms ** 2)
+
+    # 2. Rolling resistance: affected by under-inflated tire pressure
     crr = 0.012 + (max(0.0, (35.0 - psi) * 0.0004) if psi < 35.0 else 0.0)
     f_roll = crr * total_mass * 9.81 * np.cos(theta)
+
+    # 3. Hill Incline force: positive = uphill (ascent), negative = downhill (descent)
     f_grade = total_mass * 9.81 * np.sin(theta)
+
+    # 4. Acceleration force: F = m * a (only when accelerating forward)
     f_accel = total_mass * accel if accel > 0 else 0.0
+
+    # Total tractive force and power demand (kW)
     total_force = f_aero + f_roll + f_grade + f_accel
     power_kw = max(0.0, (total_force * v_ms) / 1000.0)
-    cold_penalty = 1.0 + max(0.0, (85.0 - temp) * 0.003)
+
+    # Thermal & RPM efficiency penalties
+    cold_penalty = 1.0 + max(0.0, (85.0 - temp) * 0.003)      # Cold engine consumes more
     rpm_penalty = 1.0 + (0.15 * ((rpm / 1600.0) - 1.0) ** 2 if rpm > 1800 else 0.0)
+
+    # Idle fuel rate (L/h)
     idle_lh = 1.2 * (rpm / 800.0)
 
+    # Actual fuel rate (L/h) vs Ideal expected baseline (L/h)
     if speed < 1.0:
         actual_lh = idle_lh * cold_penalty
         expected_lh = idle_lh
     else:
         actual_lh = (idle_lh * 0.4) + (power_kw * 0.265 * cold_penalty * rpm_penalty)
+        # Expected baseline assumes optimal driving (0 incline, 0 accel, optimal rpm)
         opt_power = ((0.012 * total_mass * 9.81 + f_aero) * v_ms) / 1000.0
         expected_lh = (idle_lh * 0.35) + (opt_power * 0.25)
 
     actual_lh = max(0.6, actual_lh)
     expected_lh = max(0.5, expected_lh)
 
+    # Derived fuel metrics
     excess_fuel_lh = actual_lh - expected_lh
     dev_pct = (excess_fuel_lh / expected_lh) * 100.0
     km_per_l = (speed / actual_lh) if speed > 1.0 else 0.0
     l_per_100km = (actual_lh / speed * 100.0) if speed > 1.0 else 99.9
     waste_cost_per_hr = max(0.0, excess_fuel_lh) * fuel_price
 
+    # Range and endurance
     remaining_hours = fuel_avail / actual_lh
     remaining_range_km = remaining_hours * speed
 
+    # SHAP-Style factor breakdown (L/h)
     factors = {
         "Base Cruising": round(max(0.2, expected_lh * 0.6), 2),
         "Hill Gradient (Ascent)": round(max(0.0, (f_grade * v_ms / 1000.0) * 0.26), 2) if incline > 0 else 0.0,
@@ -498,7 +522,7 @@ with tab3:
     fig_dep.update_layout(xaxis_title="Distance Traveled (km)", yaxis_title="Fuel Level (Liters)", height=400)
     st.plotly_chart(fig_dep, use_container_width=True)
 
-st.caption("FleetFuel AI Telematics System • Simple, Explainable Vehicle Fuel Intelligence")
+st.caption("FleetFuel Telematics System • Simple, Explainable Vehicle Fuel Intelligence")
 
 # Auto-Stream Continuous Polling (1 second intervals)
 if preset == "Live Slope Optimization" and auto_live:

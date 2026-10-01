@@ -78,7 +78,7 @@ def get_mqtt_telemetry_store():
 global_telemetry_store = get_mqtt_telemetry_store()
 
 st.set_page_config(
-    page_title="FleetFuel AI - Telematics Dashboard",
+    page_title="FleetFuel - Telematics Dashboard",
     page_icon="⚡",
     layout="wide"
 )
@@ -465,7 +465,7 @@ with tab3:
     fig_dep.update_layout(xaxis_title="Distance Traveled (km)", yaxis_title="Fuel Level (Liters)", height=400)
     st.plotly_chart(fig_dep, use_container_width=True)
 
-st.caption("FleetFuel AI Telematics System • Simple, Explainable Vehicle Fuel Intelligence")
+st.caption("FleetFuel Telematics System • Simple, Explainable Vehicle Fuel Intelligence")
 
 if preset == "Live Slope Optimization" and auto_live:
     import time
